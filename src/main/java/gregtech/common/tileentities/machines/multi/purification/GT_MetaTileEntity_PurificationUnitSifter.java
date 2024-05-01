@@ -3,11 +3,11 @@ package gregtech.common.tileentities.machines.multi.purification;
 import static com.gtnewhorizon.structurelib.structure.StructureUtility.lazy;
 import static com.gtnewhorizon.structurelib.structure.StructureUtility.ofBlock;
 import static com.gtnewhorizon.structurelib.structure.StructureUtility.ofChain;
-import static com.gtnewhorizon.structurelib.structure.StructureUtility.onElementPass;
 import static gregtech.api.enums.GT_HatchElement.InputBus;
 import static gregtech.api.enums.GT_HatchElement.InputHatch;
 import static gregtech.api.enums.GT_HatchElement.OutputBus;
 import static gregtech.api.enums.GT_HatchElement.OutputHatch;
+import static gregtech.api.enums.GT_Values.AuthorNotAPenguin;
 import static gregtech.api.enums.Textures.BlockIcons.OVERLAY_FRONT_DISTILLATION_TOWER;
 import static gregtech.api.enums.Textures.BlockIcons.OVERLAY_FRONT_DISTILLATION_TOWER_ACTIVE;
 import static gregtech.api.enums.Textures.BlockIcons.OVERLAY_FRONT_DISTILLATION_TOWER_ACTIVE_GLOW;
@@ -16,6 +16,7 @@ import static gregtech.api.util.GT_StructureUtility.ofFrame;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
@@ -59,23 +60,24 @@ public class GT_MetaTileEntity_PurificationUnitSifter extends
     private static final int STRUCTURE_Y_OFFSET = 2;
     private static final int STRUCTURE_Z_OFFSET = 1;
 
-    private int mCasingAmount;
+    // Chance that the filter is damaged every cycle.
+    private static final float FILTER_DAMAGE_RATE = 20.0f;
 
     private static final String[][] structure =
         // spotless:off
         new String[][] {
             { "           ", "           ", "           ", "           " },
-            { "           ", "   AAAAA   ", "   AA~AA   ", "   AAAAA   " },
+            { "           ", "   AAAAA   ", "   AH~HA   ", "   AAAAA   " },
             { "           ", "  A     A  ", "  AWWWWWA  ", "  AAAAAAA  " },
             { "           ", " A       A ", " AWWWWWWWA ", " AAAAAAAAA " },
-            { "           ", "A         A", "AWWWCCCWWWA", "AAAAAAAAAAA" },
-            { "    DDD    ", "A         A", "AWWCWWWCWWA", "AAAAAAAAAAA" },
-            { "DDDDDBD    ", "A    B    A", "AWWCWBWCWWA", "AAAAAAAAAAA" },
-            { "    DDD    ", "A         A", "AWWCWWWCWWA", "AAAAAAAAAAA" },
-            { "           ", "A         A", "AWWWCCCWWWA", "AAAAAAAAAAA" },
+            { "           ", "A         A", "AWWWCCCWWWA", "AAAAFFFAAAA" },
+            { "    DDD    ", "A         A", "HWWCWWWCWWH", "AAAFFFFFAAA" },
+            { "DDDDDBD    ", "A    B    A", "AWWCWBWCWWA", "AAAFFFFFAAA" },
+            { "    DDD    ", "A         A", "HWWCWWWCWWH", "AAAFFFFFAAA" },
+            { "           ", "A         A", "AWWWCCCWWWA", "AAAAFFFAAAA" },
             { "           ", " A       A ", " AWWWWWWWA ", " AAAAAAAAA " },
             { "           ", "  A     A  ", "  AWWWWWA  ", "  AAAAAAA  " },
-            { "           ", "   AAAAA   ", "   AAAAA   ", "   AAAAA   " } };
+            { "           ", "   AAAAA   ", "   AHAHA   ", "   AAAAA   " } };
     // spotless:on
 
     private static final IStructureDefinition<GT_MetaTileEntity_PurificationUnitSifter> STRUCTURE_DEFINITION = StructureDefinition
@@ -89,22 +91,28 @@ public class GT_MetaTileEntity_PurificationUnitSifter extends
                         .map(s -> s.replaceAll("W", " "))
                         .toArray(String[]::new))
                 .toArray(String[][]::new))
+        // Hatches
         .addElement(
-            'A',
+            'H',
             ofChain(
                 lazy(
                     t -> GT_StructureUtility.<GT_MetaTileEntity_PurificationUnitSifter>buildHatchAdder()
                         .atLeastList(t.getAllowedHatches())
                         .casingIndex(49)
                         .dot(1)
+                        .hint(() -> "Input Bus, Output Bus, Input Hatch, Output Hatch")
                         .build()),
-                // Currently clean stainless steel casing
-                onElementPass(t -> t.mCasingAmount++, ofBlock(GregTech_API.sBlockCasings4, 1))))
-        // currently ptfe pipe casing
+                // Clean stainless steel machine casing
+                ofBlock(GregTech_API.sBlockCasings4, 1)))
+        // Clean stainless steel machine casing
+        .addElement('A', ofBlock(GregTech_API.sBlockCasings4, 1))
+        // PTFE pipe casing
         .addElement('B', ofBlock(GregTech_API.sBlockCasings8, 1))
         .addElement('C', ofFrame(Materials.Iridium))
         .addElement('D', ofFrame(Materials.DamascusSteel))
         .addElement('W', ofChain(ofBlock(Blocks.water, 0)))
+        // Filter machine casing
+        .addElement('F', ofBlock(GregTech_API.sBlockCasings3, 11))
         .build();
 
     public GT_MetaTileEntity_PurificationUnitSifter(int aID, String aName, String aNameRegional) {
@@ -122,7 +130,6 @@ public class GT_MetaTileEntity_PurificationUnitSifter extends
 
     @Override
     public long getActivePowerUsage() {
-        // TODO: Balancing, etc.
         return 32720;
     }
 
@@ -141,6 +148,9 @@ public class GT_MetaTileEntity_PurificationUnitSifter extends
             .fluids(
                 this.getStoredFluids()
                     .toArray(new FluidStack[] {}))
+            .items(
+                this.getStoredInputs()
+                    .toArray(new ItemStack[] {}))
             .find();
 
         this.endRecipeProcessing();
@@ -161,6 +171,18 @@ public class GT_MetaTileEntity_PurificationUnitSifter extends
     }
 
     @Override
+    public void depleteRecipeInputs() {
+        super.depleteRecipeInputs();
+
+        // Now do random roll to determine if the filter should be destroyed
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        int roll = random.nextInt(1, 101);
+        if (roll < FILTER_DAMAGE_RATE) {
+            this.depleteInput(this.currentRecipe.mInputs[0]);
+        }
+    }
+
+    @Override
     public IStructureDefinition<GT_MetaTileEntity_PurificationUnitSifter> getStructureDefinition() {
         return STRUCTURE_DEFINITION;
     }
@@ -178,14 +200,58 @@ public class GT_MetaTileEntity_PurificationUnitSifter extends
             .addInfo(
                 EnumChatFormatting.AQUA + ""
                     + EnumChatFormatting.BOLD
-                    + "Water tier: "
+                    + "Water Tier: "
                     + EnumChatFormatting.WHITE
                     + GT_Utility.formatNumbers(getWaterTier())
                     + EnumChatFormatting.RESET)
+            .addInfo("Controller block for the Sifter Purification Unit.")
+            .addInfo("Must be linked to a Purification Plant to work.")
             .addSeparator()
-            .beginStructureBlock(11, 4, 11, true)
+            .addInfo("Filters out large particles in the water such as")
+            .addInfo("dirt, sticks, and perhaps even some treasure!")
+            .addInfo("Requires a filter in the input bus to work.")
+            .addInfo(
+                "Every cycle, has a " + EnumChatFormatting.RED
+                    + GT_Utility.formatNumbers(FILTER_DAMAGE_RATE)
+                    + "%"
+                    + EnumChatFormatting.GRAY
+                    + " chance to destroy the filter.")
+            .addInfo(AuthorNotAPenguin)
+            .beginStructureBlock(11, 4, 11, false)
+            .addSeparator()
             .addController("Front center")
-            .toolTipFinisher("Gregtech");
+            .addCasingInfoRangeColored(
+                "Clean Stainless Steel Machine Casing",
+                EnumChatFormatting.GRAY,
+                123,
+                131,
+                EnumChatFormatting.GOLD,
+                false)
+            .addCasingInfoExactlyColored(
+                "Filter Machine Casing",
+                EnumChatFormatting.GRAY,
+                21,
+                EnumChatFormatting.GOLD,
+                false)
+            .addCasingInfoExactlyColored(
+                "Iridium Frame Box",
+                EnumChatFormatting.GRAY,
+                21,
+                EnumChatFormatting.GOLD,
+                false)
+            .addCasingInfoExactlyColored(
+                "Damascus Steel Frame Box",
+                EnumChatFormatting.GRAY,
+                12,
+                EnumChatFormatting.GOLD,
+                false)
+            .addCasingInfoExactlyColored("PTFE Pipe Casing", EnumChatFormatting.GRAY, 3, EnumChatFormatting.GOLD, false)
+            .addInputBus(EnumChatFormatting.GOLD + "0" + EnumChatFormatting.GRAY + "+", 1)
+            .addOutputBus(EnumChatFormatting.GOLD + "0" + EnumChatFormatting.GRAY + "+", 1)
+            .addInputHatch(EnumChatFormatting.GOLD + "0" + EnumChatFormatting.GRAY + "+", 1)
+            .addOutputHatch(EnumChatFormatting.GOLD + "0" + EnumChatFormatting.GRAY + "+", 1)
+            .addStructureInfo("Use the StructureLib Hologram Projector to build the structure.")
+            .toolTipFinisher("GregTech");
         return tt;
     }
 

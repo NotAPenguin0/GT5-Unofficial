@@ -15,6 +15,10 @@ import net.minecraft.util.EnumChatFormatting;
 import net.minecraft.world.World;
 import net.minecraftforge.fluids.FluidStack;
 
+import com.gtnewhorizons.modularui.api.widget.Widget;
+import com.gtnewhorizons.modularui.common.widget.FakeSyncWidget;
+import com.gtnewhorizons.modularui.common.widget.MultiChildWidget;
+
 import gregtech.api.enums.ItemList;
 import gregtech.api.enums.Materials;
 import gregtech.api.enums.VoidingMode;
@@ -37,7 +41,7 @@ public abstract class GT_MetaTileEntity_PurificationUnitBase<T extends GT_MetaTi
 
     // TODO: Balancing
     public static final float WATER_BOOST_NEEDED_FLUID = 0.1f;
-    // TODO: Balancing
+    // TODO: Balancing. This is an additive boost
     public static final float WATER_BOOST_BONUS_CHANCE = 0.15f;
 
     /**
@@ -77,7 +81,7 @@ public abstract class GT_MetaTileEntity_PurificationUnitBase<T extends GT_MetaTi
 
     protected GT_Recipe currentRecipe = null;
 
-    private float currentRecipeChance = 0.0f;
+    protected float currentRecipeChance = 0.0f;
 
     protected GT_MetaTileEntity_PurificationUnitBase(int aID, String aName, String aNameRegional) {
         super(aID, aName, aNameRegional);
@@ -148,6 +152,10 @@ public abstract class GT_MetaTileEntity_PurificationUnitBase<T extends GT_MetaTi
         return recipeChance;
     }
 
+    public float calculateFinalSuccessChance() {
+        return this.currentRecipeChance;
+    }
+
     /**
      * Get the tier of water this unit makes. Starts at 1.
      */
@@ -176,6 +184,12 @@ public abstract class GT_MetaTileEntity_PurificationUnitBase<T extends GT_MetaTi
         return depleteInput(inputWater, true);
     }
 
+    public void depleteRecipeInputs() {
+        for (FluidStack input : this.currentRecipe.mFluidInputs) {
+            this.depleteInput(input);
+        }
+    }
+
     /**
      * Called after a recipe is found and accepted.
      *
@@ -193,9 +207,8 @@ public abstract class GT_MetaTileEntity_PurificationUnitBase<T extends GT_MetaTi
             this.depleteInput(inputWater);
         }
 
-        for (FluidStack input : this.currentRecipe.mFluidInputs) {
-            this.depleteInput(input);
-        }
+        this.depleteRecipeInputs();
+
         this.mMaxProgresstime = cycleTime;
         this.mProgresstime = progressTime;
         this.mEfficiency = 10000;
@@ -207,30 +220,35 @@ public abstract class GT_MetaTileEntity_PurificationUnitBase<T extends GT_MetaTi
         this.lEUt = -this.getActivePowerUsage();
     }
 
+    public void addRecipeOutputs() {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        this.addFluidOutputs(this.currentRecipe.mFluidOutputs);
+        // If this recipe has random item outputs, roll on it and add outputs
+        if (this.currentRecipe.mChances != null) {
+            // Roll on each output individually
+            for (int i = 0; i < this.currentRecipe.mOutputs.length; ++i) {
+                // Recipes store probabilities as a value ranging from 1-10000
+                int roll = random.nextInt(10000);
+                if (roll <= this.currentRecipe.mChances[i]) {
+                    this.addOutput(this.currentRecipe.mOutputs[i]);
+                }
+            }
+        } else {
+            // Guaranteed item output
+            for (int i = 0; i < this.currentRecipe.mOutputs.length; ++i) {
+                this.addOutput(this.currentRecipe.mOutputs[i]);
+            }
+        }
+    }
+
     public void endCycle() {
         ThreadLocalRandom random = ThreadLocalRandom.current();
 
         // First see if the recipe succeeded. For some reason random.nextFloat does not compile, so we use this
         // hack instead.
         float successRoll = random.nextInt(0, 10000) / 100.0f;
-        if (successRoll <= this.currentRecipeChance) {
-            this.addFluidOutputs(this.currentRecipe.mFluidOutputs);
-            // If this recipe has random item outputs, roll on it and add outputs
-            if (this.currentRecipe.mChances != null) {
-                // Roll on each output individually
-                for (int i = 0; i < this.currentRecipe.mOutputs.length; ++i) {
-                    // Recipes store probabilities as a value ranging from 1-10000
-                    int roll = random.nextInt(10000);
-                    if (roll <= this.currentRecipe.mChances[i]) {
-                        this.addOutput(this.currentRecipe.mOutputs[i]);
-                    }
-                }
-            } else {
-                // Guaranteed item output
-                for (int i = 0; i < this.currentRecipe.mOutputs.length; ++i) {
-                    this.addOutput(this.currentRecipe.mOutputs[i]);
-                }
-            }
+        if (successRoll <= calculateFinalSuccessChance()) {
+            addRecipeOutputs();
         } else {
             onRecipeFail();
         }
@@ -314,6 +332,7 @@ public abstract class GT_MetaTileEntity_PurificationUnitBase<T extends GT_MetaTi
             controllerY = controllerNBT.getInteger("y");
             controllerZ = controllerNBT.getInteger("z");
             controllerSet = true;
+            trySetControllerFromCoord(controllerX, controllerY, controllerZ);
         }
         currentRecipeChance = aNBT.getFloat("currentRecipeChance");
     }
@@ -463,7 +482,7 @@ public abstract class GT_MetaTileEntity_PurificationUnitBase<T extends GT_MetaTi
             if (this.mMaxProgresstime != 0) {
                 ret.add(
                     "Success chance: " + EnumChatFormatting.YELLOW
-                        + GT_Utility.formatNumbers(this.currentRecipeChance)
+                        + GT_Utility.formatNumbers(this.calculateFinalSuccessChance())
                         + "%"
                         + EnumChatFormatting.RESET);
             }
@@ -517,6 +536,17 @@ public abstract class GT_MetaTileEntity_PurificationUnitBase<T extends GT_MetaTi
         } else {
             return PurificationUnitStatus.ONLINE;
         }
+    }
+
+    /**
+     * Creates all widgets needed to sync this unit's status with the client
+     *
+     * @return
+     */
+    public Widget makeSyncerWidgets() {
+        return new MultiChildWidget()
+            .addChild(new FakeSyncWidget.BooleanSyncer(() -> this.mMachine, machine -> this.mMachine = machine))
+            .addChild(new FakeSyncWidget.BooleanSyncer(this::isAllowedToWork, _work -> {}));
     }
 
     @Override
