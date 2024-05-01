@@ -58,7 +58,10 @@ import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.GT_MetaTileEntity_ExtendedPowerMultiBlockBase;
 import gregtech.api.render.TextureFactory;
-import gregtech.api.util.*;
+import gregtech.api.util.GT_Log;
+import gregtech.api.util.GT_Multiblock_Tooltip_Builder;
+import gregtech.api.util.GT_StructureUtility;
+import gregtech.api.util.GT_Utility;
 import gregtech.api.util.shutdown.ShutDownReasonRegistry;
 import gregtech.common.gui.modularui.widget.ShutDownReasonSyncer;
 import gregtech.common.gui.modularui.widget.TextButtonWidget;
@@ -175,12 +178,8 @@ public class GT_MetaTileEntity_PurificationPlant
                 23,
                 EnumChatFormatting.GOLD,
                 false)
-            .addEnergyHatch(
-                EnumChatFormatting.GOLD + "1",
-                1)
-            .addMaintenanceHatch(
-                EnumChatFormatting.GOLD + "1",
-                1)
+            .addEnergyHatch(EnumChatFormatting.GOLD + "1", 1)
+            .addMaintenanceHatch(EnumChatFormatting.GOLD + "1", 1)
             .toolTipFinisher("GregTech");
         return tt;
     }
